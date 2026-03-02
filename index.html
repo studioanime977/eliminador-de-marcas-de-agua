@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhotoClone Studio - Editor Profesional</title>
+    <style>
+        :root {
+            --bg-dark: #1a1a1a;
+            --panel-dark: #2d2d2d;
+            --accent: #0078d4;
+            --text: #e0e0e0;
+        }
+
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Barra Lateral */
+        #sidebar {
+            width: 280px;
+            background-color: var(--panel-dark);
+            border-right: 1px solid #444;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            z-index: 10;
+        }
+
+        h2 { font-size: 1.2rem; margin-top: 0; color: var(--accent); }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label { font-size: 0.85rem; color: #aaa; }
+
+        input[type="range"] { width: 100%; cursor: pointer; }
+
+        button {
+            background-color: #444;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        button:hover { background-color: var(--accent); }
+        
+        .btn-main { background-color: var(--accent); font-weight: bold; }
+
+        .instructions {
+            font-size: 0.8rem;
+            background: #222;
+            padding: 10px;
+            border-radius: 4px;
+            line-height: 1.4;
+            border-left: 3px solid var(--accent);
+        }
+
+        /* Área de Trabajo */
+        #viewport {
+            flex-grow: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            position: relative;
+            overflow: auto;
+        }
+
+        canvas {
+            background-image: 
+                linear-gradient(45deg, #222 25%, transparent 25%), 
+                linear-gradient(-45deg, #222 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #222 75%), 
+                linear-gradient(-45deg, transparent 75%, #222 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+            box-shadow: 0 0 30px rgba(0,0,0,0.5);
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+
+<aside id="sidebar">
+    <h2>PhotoClone Studio</h2>
+    
+    <div class="control-group">
+        <label>Imagen</label>
+        <input type="file" id="upload" accept="image/*">
+    </div>
+
+    <div class="control-group">
+        <label>Tamaño del Pincel (<span id="sizeVal">30</span>px)</label>
+        <input type="range" id="brushSize" min="5" max="150" value="30">
+    </div>
+
+    <div class="control-group">
+        <label>Opacidad (<span id="opacityVal">100</span>%)</label>
+        <input type="range" id="opacity" min="1" max="100" value="100">
+    </div>
+
+    <div class="control-group">
+        <label>Dureza (<span id="hardnessVal">50</span>%)</label>
+        <input type="range" id="hardness" min="0" max="100" value="50">
+    </div>
+
+    <hr style="border: 0; border-top: 1px solid #444; width: 100%;">
+
+    <button id="undoBtn">Deshacer</button>
+    <button id="downloadBtn" class="btn-main">Descargar Imagen</button>
+
+    <div class="instructions">
+        <strong>Instrucciones:</strong><br>
+        1. Sube una imagen.<br>
+        2. <strong>Alt + Clic</strong> en el área limpia (origen).<br>
+        3. <strong>Clic y arrastra</strong> sobre la marca de agua para clonar.
+    </div>
+</aside>
+
+<main id="viewport">
+    <canvas id="canvas"></canvas>
+</main>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const upload = document.getElementById('upload');
+    const brushSizeInput = document.getElementById('brushSize');
+    const opacityInput = document.getElementById('opacity');
+    const hardnessInput = document.getElementById('hardness');
+    const undoBtn = document.getElementById('undoBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    let img = new Image();
+    let history = [];
+    let isDrawing = false;
+    let sourcePoint = null; // {x, y}
+    let offset = {x: 0, y: 0};
+
+    // Actualizar etiquetas de valores
+    const updateLabels = () => {
+        document.getElementById('sizeVal').innerText = brushSizeInput.value;
+        document.getElementById('opacityVal').innerText = opacityInput.value;
+        document.getElementById('hardnessVal').innerText = hardnessInput.value;
+    };
+
+    [brushSizeInput, opacityInput, hardnessInput].forEach(el => el.oninput = updateLabels);
+
+    // Cargar Imagen
+    upload.onchange = (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            img.onload = () => {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                saveHistory();
+            };
+            img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    };
+
+    function saveHistory() {
+        if (history.length > 10) history.shift();
+        history.push(canvas.toDataURL());
+    }
+
+    undoBtn.onclick = () => {
+        if (history.length > 1) {
+            history.pop();
+            let prevState = new Image();
+            prevState.src = history[history.length - 1];
+            prevState.onload = () => {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(prevState, 0, 0);
+            };
+        }
+    };
+
+    // Lógica del Tampón de Clonar
+    canvas.addEventListener('mousedown', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        if (e.altKey) {
+            sourcePoint = {x, y};
+            alert("Punto de origen establecido");
+            return;
+        }
+
+        if (!sourcePoint) {
+            alert("Primero presiona Alt+Clic para definir el origen.");
+            return;
+        }
+
+        isDrawing = true;
+        offset = { x: x - sourcePoint.x, y: y - sourcePoint.y };
+        clone(x, y);
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDrawing) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        clone(x, y);
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (isDrawing) {
+            isDrawing = false;
+            saveHistory();
+        }
+    });
+
+    function clone(targetX, targetY) {
+        const size = parseInt(brushSizeInput.value);
+        const opacity = opacityInput.value / 100;
+        const hardness = hardnessInput.value / 100;
+
+        // Calculamos el origen actual basado en el desplazamiento inicial
+        const sX = targetX - offset.x;
+        const sY = targetY - offset.y;
+
+        // Crear un buffer temporal para el pincel suave
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = size;
+        tempCanvas.height = size;
+        const tCtx = tempCanvas.getContext('2d');
+
+        // Dibujar la máscara circular (suavidad/dureza)
+        const gradient = tCtx.createRadialGradient(size/2, size/2, (size/2) * hardness, size/2, size/2, size/2);
+        gradient.addColorStop(0, `rgba(0,0,0,${opacity})`);
+        gradient.addColorStop(1, 'rgba(0,0,0,0)');
+        
+        tCtx.fillStyle = gradient;
+        tCtx.arc(size/2, size/2, size/2, 0, Math.PI * 2);
+        tCtx.fill();
+
+        // Aplicar la máscara sobre el contenido fuente (clonado)
+        tCtx.globalCompositeOperation = 'source-in';
+        tCtx.drawImage(canvas, sX - size/2, sY - size/2, size, size, 0, 0, size, size);
+
+        // Dibujar en el canvas principal
+        ctx.drawImage(tempCanvas, targetX - size/2, targetY - size/2);
+    }
+
+    downloadBtn.onclick = () => {
+        const link = document.createElement('a');
+        link.download = 'imagen_editada.png';
+        link.href = canvas.toDataURL();
+        link.click();
+    };
+</script>
+
+</body>
+</html>
